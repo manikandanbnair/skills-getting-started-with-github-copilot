@@ -17,7 +17,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Function to fetch activities from API
   async function fetchActivities() {
     try {
-      const response = await fetch("/activities");
+  const response = await fetch("/activities", { cache: 'no-store' });
       const activities = await response.json();
 
       // Clear loading message and reset list + select
@@ -31,11 +31,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const spotsLeft = details.max_participants - details.participants.length;
 
-        const participantsHtml =
-          Array.isArray(details.participants) && details.participants.length
-            ? details.participants.map((p) => `<li class="participant-item">${escapeHtml(p)}</li>`).join("")
-            : '<li class="participant-item empty">No participants yet</li>';
-
         activityCard.innerHTML = `
           <h4>${escapeHtml(name)}</h4>
           <p>${escapeHtml(details.description)}</p>
@@ -45,12 +40,79 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="participants-section">
             <h5>Participants</h5>
             <ul class="participants-list">
-              ${participantsHtml}
+              <!-- participants will be populated by DOM to attach delete handlers -->
             </ul>
           </div>
         `;
 
         activitiesList.appendChild(activityCard);
+
+        // Populate participants list using DOM so we can attach delete handlers safely
+        const participantsListEl = activityCard.querySelector('.participants-list');
+        participantsListEl.innerHTML = '';
+
+        if (Array.isArray(details.participants) && details.participants.length) {
+          details.participants.forEach((p) => {
+            const li = document.createElement('li');
+            li.className = 'participant-item';
+
+            const span = document.createElement('span');
+            span.className = 'participant-email';
+            span.textContent = p; // textContent is safe
+
+            const btn = document.createElement('button');
+            btn.className = 'participant-delete';
+            btn.title = 'Unregister participant';
+            btn.type = 'button';
+            btn.textContent = '✕';
+            // store raw values in dataset for use when calling the API
+            btn.dataset.activity = name;
+            btn.dataset.email = p;
+
+            btn.addEventListener('click', async (e) => {
+              // Disable while processing
+              btn.disabled = true;
+              try {
+                const resp = await fetch(
+                  `/activities/${encodeURIComponent(name)}/participants?email=${encodeURIComponent(p)}`,
+                  { method: 'DELETE' }
+                );
+
+                const result = await resp.json().catch(() => ({}));
+
+                if (resp.ok) {
+                  messageDiv.textContent = result.message || 'Participant removed';
+                  messageDiv.className = 'success';
+                  messageDiv.classList.remove('hidden');
+                  // Refresh activities so UI updates
+                  await fetchActivities();
+                } else {
+                  messageDiv.textContent = result.detail || 'Failed to remove participant';
+                  messageDiv.className = 'error';
+                  messageDiv.classList.remove('hidden');
+                }
+                // Hide after a few seconds
+                setTimeout(() => messageDiv.classList.add('hidden'), 4000);
+              } catch (err) {
+                console.error('Error removing participant:', err);
+                messageDiv.textContent = 'Failed to remove participant';
+                messageDiv.className = 'error';
+                messageDiv.classList.remove('hidden');
+              } finally {
+                btn.disabled = false;
+              }
+            });
+
+            li.appendChild(span);
+            li.appendChild(btn);
+            participantsListEl.appendChild(li);
+          });
+        } else {
+          const li = document.createElement('li');
+          li.className = 'participant-item empty';
+          li.textContent = 'No participants yet';
+          participantsListEl.appendChild(li);
+        }
 
         // Add option to select dropdown
         const option = document.createElement("option");
@@ -58,6 +120,8 @@ document.addEventListener("DOMContentLoaded", () => {
         option.textContent = name;
         activitySelect.appendChild(option);
       });
+      
+      return activities;
     } catch (error) {
       activitiesList.innerHTML = "<p>Failed to load activities. Please try again later.</p>";
       console.error("Error fetching activities:", error);
@@ -87,7 +151,7 @@ document.addEventListener("DOMContentLoaded", () => {
         signupForm.reset();
 
         // Refresh activities so participants list updates immediately
-        fetchActivities();
+        await fetchActivities();
       } else {
         messageDiv.textContent = result.detail || "An error occurred";
         messageDiv.className = "error";
